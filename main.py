@@ -80,6 +80,3 @@ def get_stations(
         s.pop("last_updated", None)
 
     return JSONResponse(content=stations)
-
-# For Vercel ASGI
-app_handler = app
