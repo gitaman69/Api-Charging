@@ -7,9 +7,10 @@ import os
 load_dotenv()
 
 OCM_KEY = os.getenv("openCharge")
+MONGO_URI = os.getenv("MONGO_URI")
 
 # MongoDB setup
-client = pymongo.MongoClient("mongodb+srv://aman:aman69@evcharging.8t9nhyf.mongodb.net/?retryWrites=true&w=majority&appName=EvCharging")
+client = pymongo.MongoClient(MONGO_URI)
 try:
     client.admin.command('ismaster')
     print("✅ MongoDB connection successful.")
