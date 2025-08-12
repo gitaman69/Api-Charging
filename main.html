@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>EV Stations Map</title>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBPk8UKdbOQeQ4lQWtpIVEuHNSxAmx1yww"></script>
+    <style>
+      #map {
+        height: 100vh;
+        width: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="map"></div>
+    <script>
+      async function initMap() {
+        const response = await fetch("http://127.0.0.1:8000/all-stations");
+        const stations = await response.json();
+
+        const map = new google.maps.Map(document.getElementById("map"), {
+          zoom: 6,
+          center: { lat: 23.2599, lng: 77.4126 } // Center of India or any region
+        });
+
+        stations.forEach(station => {
+          const marker = new google.maps.Marker({
+            position: { lat: station.latitude, lng: station.longitude },
+            map: map,
+            title: station.name
+          });
+
+          const infowindow = new google.maps.InfoWindow({
+            content: `<strong>${station.name}</strong><br>${station.address}<br><em>${station.provider}</em>`
+          });
+
+          marker.addListener("click", () => {
+            infowindow.open(map, marker);
+          });
+        });
+      }
+
+      window.onload = initMap;
+    </script>
+  </body>
+</html>
