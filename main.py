@@ -4,6 +4,12 @@ from pymongo import MongoClient
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from dotenv import load_dotenv
+import os
+
+load_dotenv()  # Load from .env file locally, Vercel uses Environment Variables in settings
+
+MONGO_URI = os.getenv("MONGO_URI")
 
 app = FastAPI(title="EV Charging Stations API")
 
@@ -16,7 +22,7 @@ app.add_middleware(
 )
 
 # MongoDB connection
-client = MongoClient("mongodb+srv://aman:aman69@evcharging.8t9nhyf.mongodb.net/?retryWrites=true&w=majority&appName=EvCharging")
+client = MongoClient(MONGO_URI)
 db = client.ev_chargers
 collection = db.stations
 
@@ -74,3 +80,6 @@ def get_stations(
         s.pop("last_updated", None)
 
     return JSONResponse(content=stations)
+
+# For Vercel ASGI
+app_handler = app
