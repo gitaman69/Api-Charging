@@ -16,7 +16,12 @@ app.use(express.json());
 
 // MongoDB connection
 let db, collection;
-const client = new MongoClient(MONGO_URI);
+const client = new MongoClient(MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+  ssl: true,
+  serverSelectionTimeoutMS: 5000
+});
 
 async function connectDB() {
   try {
@@ -91,7 +96,4 @@ app.get("/stations", async (req, res) => {
   }
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
+export default app;
