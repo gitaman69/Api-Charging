@@ -2,38 +2,23 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import { MongoClient, ObjectId } from "mongodb";
+import { connectDB, getCollection } from "./db.js";
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 8000;
-const MONGO_URI = process.env.MONGO_URI;
 
 // Middleware
 app.use(cors());
 app.use(express.json());
 
-// MongoDB connection
-let db, collection;
-const client = new MongoClient(MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-  ssl: true,
-  serverSelectionTimeoutMS: 30000
+// Connect to DB first, then start server
+connectDB().then(() => {
+  app.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+  });
 });
-
-async function connectDB() {
-  try {
-    await client.connect();
-    db = client.db("ev_chargers");
-    collection = db.collection("stations");
-    console.log("✅ Connected to MongoDB");
-  } catch (error) {
-    console.error("❌ MongoDB connection failed:", error);
-  }
-}
-connectDB();
 
 // Routes
 app.get("/", (req, res) => {
@@ -42,7 +27,7 @@ app.get("/", (req, res) => {
 
 app.get("/all-stations", async (req, res) => {
   try {
-    const stations = await collection.find(
+    const stations = await getCollection().find(
       {},
       {
         projection: {
@@ -57,12 +42,7 @@ app.get("/all-stations", async (req, res) => {
       }
     ).toArray();
 
-    const formattedStations = stations.map(s => ({
-      ...s,
-      _id: s._id.toString()
-    }));
-
-    res.json(formattedStations);
+    res.json(stations.map(s => ({ ...s, _id: s._id.toString() })));
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch stations" });
   }
@@ -83,17 +63,12 @@ app.get("/stations", async (req, res) => {
       query.longitude = { $gte: longitude - 0.1, $lte: longitude + 0.1 };
     }
 
-    const stations = await collection.find(query).limit(Number(limit)).toArray();
-
-    const formattedStations = stations.map(s => {
+    const stations = await getCollection().find(query).limit(Number(limit)).toArray();
+    res.json(stations.map(s => {
       const { last_updated, ...rest } = s;
       return { ...rest, _id: s._id.toString() };
-    });
-
-    res.json(formattedStations);
+    }));
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch stations" });
   }
 });
-
-export default app;
