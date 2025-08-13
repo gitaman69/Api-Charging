@@ -20,7 +20,7 @@ const client = new MongoClient(MONGO_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
   ssl: true,
-  serverSelectionTimeoutMS: 5000
+  serverSelectionTimeoutMS: 30000
 });
 
 async function connectDB() {
