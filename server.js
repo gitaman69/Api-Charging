@@ -27,26 +27,33 @@ app.get("/", (req, res) => {
 
 app.get("/all-stations", async (req, res) => {
   try {
-    const stations = await getCollection().find(
-      {},
-      {
-        projection: {
-          _id: 1,
-          name: 1,
-          latitude: 1,
-          longitude: 1,
-          address: 1,
-          provider: 1,
-          source: 1
+    const { skip = 0, limit = 500 } = req.query;
+
+    const stations = await getCollection()
+      .find(
+        {},
+        {
+          projection: {
+            _id: 1,
+            name: 1,
+            latitude: 1,
+            longitude: 1,
+            address: 1,
+            provider: 1,
+            source: 1
+          }
         }
-      }
-    ).toArray();
+      )
+      .skip(parseInt(skip))
+      .limit(parseInt(limit))
+      .toArray();
 
     res.json(stations.map(s => ({ ...s, _id: s._id.toString() })));
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch stations" });
   }
 });
+
 
 app.get("/stations", async (req, res) => {
   try {
