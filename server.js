@@ -50,25 +50,52 @@ app.get("/all-stations", async (req, res) => {
 
 app.get("/stations", async (req, res) => {
   try {
-    const { provider, source, lat, lon, limit = 50 } = req.query;
+    const { provider, source, lat, lon, limit = 20, skip = 0, maxDistance = 5000 } = req.query;
 
+    // Build base filter
     const query = {};
     if (provider) query.provider = provider;
     if (source) query.source = source;
 
+    let cursor;
+
     if (lat && lon) {
       const latitude = parseFloat(lat);
       const longitude = parseFloat(lon);
-      query.latitude = { $gte: latitude - 0.1, $lte: latitude + 0.1 };
-      query.longitude = { $gte: longitude - 0.1, $lte: longitude + 0.1 };
+
+      // Geospatial filter - make sure you have a 2dsphere index on `location`
+      query.location = {
+        $near: {
+          $geometry: {
+            type: "Point",
+            coordinates: [longitude, latitude] // GeoJSON uses [lon, lat]
+          },
+          $maxDistance: parseInt(maxDistance) // in meters
+        }
+      };
+
+      cursor = getCollection()
+        .find(query)
+        .skip(parseInt(skip)) // for pagination
+        .limit(parseInt(limit));
+    } else {
+      // If no location provided, just return recent stations
+      cursor = getCollection()
+        .find(query)
+        .skip(parseInt(skip))
+        .limit(parseInt(limit));
     }
 
-    const stations = await getCollection().find(query).limit(Number(limit)).toArray();
+    const stations = await cursor.toArray();
+
     res.json(stations.map(s => {
       const { last_updated, ...rest } = s;
       return { ...rest, _id: s._id.toString() };
     }));
+
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: "Failed to fetch stations" });
   }
 });
+
