@@ -138,9 +138,11 @@ app.get("/stations", async (req, res) => {
   }
 });
 
-// ---------------------- Boot ----------------------
-connectDB().then(() => {
-  app.listen(PORT, () => {
-    console.log(`🚀 Server running at ${PORT}`);
-  });
-});
+// ---------------------- Boot for Vercel Serverless ----------------------
+export default async function handler(req, res) {
+  // Ensure DB is connected for this invocation
+  await connectDB();
+
+  // Forward the request to your existing Express app
+  app(req, res);
+}
