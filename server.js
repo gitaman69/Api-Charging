@@ -9,100 +9,138 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 8000;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// Connect to DB first, then start server
-connectDB().then(() => {
-  app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-  });
+// ---------------------- Utils ----------------------
+export function normalizeStation(station) {
+  if (!station) return null;
+  return {
+    _id: station._id?.toString?.() || String(station._id || ""),
+    name: station.name || "Unknown Station",
+    latitude: station.latitude ?? station.location?.coordinates?.[1] ?? null,
+    longitude: station.longitude ?? station.location?.coordinates?.[0] ?? null,
+    address: station.address || "Address not available",
+    provider: station.provider || "Unknown Provider",
+    source: station.source || null,
+    last_updated: station.last_updated || null,
+    location: station.location || null,
+    chargers: station.chargers || [],
+    city: station.city || null,
+    is_24x7: station.is_24x7 ?? null,
+    is_fourwheeler: station.is_fourwheeler ?? null,
+  };
+}
+
+export function normalizeStations(stations) {
+  if (!Array.isArray(stations)) return [];
+  return stations
+    .map(normalizeStation)
+    .filter(
+      (s) =>
+        s &&
+        s._id &&
+        typeof s.latitude === "number" &&
+        typeof s.longitude === "number" &&
+        !isNaN(s.latitude) &&
+        !isNaN(s.longitude)
+    );
+}
+
+// ---------------------- Routes ----------------------
+app.get("/", (_, res) => {
+  res.json({ message: "⚡ EV Charger API is running" });
 });
 
-// Routes
-app.get("/", (req, res) => {
-  res.json({ message: "EV Charger API is running" });
-});
-
+// Paginated fetch of all stations
 app.get("/all-stations", async (req, res) => {
   try {
-    const { skip = 0, limit = 500 } = req.query;
+    const skip = parseInt(req.query.skip) || 0;
+    const limit = Math.min(parseInt(req.query.limit) || 500, 2000);
 
     const stations = await getCollection()
-      .find(
-        {},
-        {
-          projection: {
-            _id: 1,
-            name: 1,
-            latitude: 1,
-            longitude: 1,
-            address: 1,
-            provider: 1,
-            source: 1
-          }
-        }
-      )
-      .skip(parseInt(skip))
-      .limit(parseInt(limit))
+      .find({}, { projection: { _id: 1, name: 1, latitude: 1, longitude: 1, address: 1, provider: 1, source: 1, location: 1, chargers: 1, city: 1, is_24x7: 1, is_fourwheeler: 1 } })
+      .skip(skip)
+      .limit(limit)
       .toArray();
 
-    res.json(stations.map(s => ({ ...s, _id: s._id.toString() })));
+    res.json(normalizeStations(stations));
   } catch (err) {
+    console.error("❌ /all-stations error:", err);
     res.status(500).json({ error: "Failed to fetch stations" });
   }
 });
 
+// Nearest 25 stations route (rewritten)
+app.get("/nearest-stations", async (req, res) => {
+  try {
+    const { lat, lon, maxDistance } = req.query;
+    if (!lat || !lon) return res.status(400).json({ error: "Missing lat or lon" });
 
+    const latitude = parseFloat(lat);
+    const longitude = parseFloat(lon);
+    const maxDist = parseInt(maxDistance) || 25000; // default 25 km
+
+    // Ensure 2dsphere index exists (run once in DB or via code)
+    await getCollection().createIndex({ location: "2dsphere" });
+
+    const stations = await getCollection()
+      .aggregate([
+        {
+          $geoNear: {
+            near: { type: "Point", coordinates: [longitude, latitude] },
+            distanceField: "distance",
+            spherical: true,
+            maxDistance: maxDist,
+          },
+        },
+        { $limit: 25 },
+      ])
+      .toArray();
+
+    res.json(normalizeStations(stations));
+  } catch (err) {
+    console.error("❌ /nearest-stations error:", err);
+    res.status(500).json({ error: "Failed to fetch nearest stations" });
+  }
+});
+
+
+// Existing filtered stations route
 app.get("/stations", async (req, res) => {
   try {
-    const { provider, source, lat, lon, limit = 20, skip = 0, maxDistance = 5000 } = req.query;
+    const { provider, source, lat, lon } = req.query;
+    const skip = parseInt(req.query.skip) || 0;
+    const limit = Math.min(parseInt(req.query.limit) || 20, 200);
+    const maxDistance = parseInt(req.query.maxDistance) || 5000;
 
-    // Build base filter
     const query = {};
     if (provider) query.provider = provider;
     if (source) query.source = source;
-
-    let cursor;
 
     if (lat && lon) {
       const latitude = parseFloat(lat);
       const longitude = parseFloat(lon);
 
-      // Geospatial filter - make sure you have a 2dsphere index on `location`
       query.location = {
         $near: {
-          $geometry: {
-            type: "Point",
-            coordinates: [longitude, latitude] // GeoJSON uses [lon, lat]
-          },
-          $maxDistance: parseInt(maxDistance) // in meters
-        }
+          $geometry: { type: "Point", coordinates: [longitude, latitude] },
+          $maxDistance: maxDistance,
+        },
       };
-
-      cursor = getCollection()
-        .find(query)
-        .skip(parseInt(skip)) // for pagination
-        .limit(parseInt(limit));
-    } else {
-      // If no location provided, just return recent stations
-      cursor = getCollection()
-        .find(query)
-        .skip(parseInt(skip))
-        .limit(parseInt(limit));
     }
 
-    const stations = await cursor.toArray();
-
-    res.json(stations.map(s => {
-      const { last_updated, ...rest } = s;
-      return { ...rest, _id: s._id.toString() };
-    }));
-
+    const stations = await getCollection().find(query).skip(skip).limit(limit).toArray();
+    res.json(normalizeStations(stations));
   } catch (err) {
-    console.error(err);
+    console.error("❌ /stations error:", err);
     res.status(500).json({ error: "Failed to fetch stations" });
   }
 });
 
+// ---------------------- Boot ----------------------
+connectDB().then(() => {
+  app.listen(PORT, () => {
+    console.log(`🚀 Server running at ${PORT}`);
+  });
+});
