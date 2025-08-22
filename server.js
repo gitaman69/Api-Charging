@@ -111,7 +111,10 @@ app.get("/stations", async (req, res) => {
   try {
     const { provider, source, lat, lon } = req.query;
     const skip = parseInt(req.query.skip) || 0;
-    const limit = Math.min(parseInt(req.query.limit) || 20, 200);
+
+    // ⬇️ Only apply limit if user explicitly requests it
+    const limit = req.query.limit ? Math.min(parseInt(req.query.limit), 200) : 0;
+
     const maxDistance = parseInt(req.query.maxDistance) || 5000;
 
     const query = {};
@@ -130,13 +133,21 @@ app.get("/stations", async (req, res) => {
       };
     }
 
-    const stations = await getCollection().find(query).skip(skip).limit(limit).toArray();
+    let cursor = getCollection().find(query).skip(skip);
+
+    // ⬇️ Apply limit only if provided, otherwise fetch all
+    if (limit > 0) {
+      cursor = cursor.limit(limit);
+    }
+
+    const stations = await cursor.toArray();
     res.json(normalizeStations(stations));
   } catch (err) {
     console.error("❌ /stations error:", err);
     res.status(500).json({ error: "Failed to fetch stations" });
   }
 });
+
 
 // ---------------------- Boot for Vercel Serverless ----------------------
 export default async function handler(req, res) {
