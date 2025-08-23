@@ -3,6 +3,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import { connectDB, getCollection } from "./db.js";
+import redisClient from "./redisClient.js";
 
 dotenv.config();
 
@@ -133,15 +134,38 @@ app.get("/stations", async (req, res) => {
       };
     }
 
+    // Generate a cache key based on query parameters
+    const cacheKey = `stations:${JSON.stringify({
+      provider,
+      source,
+      lat,
+      lon,
+      skip,
+      limit,
+      maxDistance,
+    })}`;
+
+    // 🔹 Try fetching from Redis cache
+    const cachedData = await redisClient.get(cacheKey);
+    if (cachedData) {
+      console.log("⚡ Serving from Redis cache");
+      return res.json(JSON.parse(cachedData));
+    }
+
+    // 🔹 If not cached, fetch from MongoDB
     let cursor = getCollection().find(query).skip(skip);
 
-    // ⬇️ Apply limit only if provided, otherwise fetch all
     if (limit > 0) {
       cursor = cursor.limit(limit);
     }
 
     const stations = await cursor.toArray();
-    res.json(normalizeStations(stations));
+    const normalized = normalizeStations(stations);
+
+    // 🔹 Store in Redis cache (expire in 5 minutes)
+    await redisClient.setEx(cacheKey, 300, JSON.stringify(normalized));
+
+    res.json(normalized);
   } catch (err) {
     console.error("❌ /stations error:", err);
     res.status(500).json({ error: "Failed to fetch stations" });
@@ -149,11 +173,17 @@ app.get("/stations", async (req, res) => {
 });
 
 
-// ---------------------- Boot for Vercel Serverless ----------------------
-export default async function handler(req, res) {
-  // Ensure DB is connected for this invocation
-  await connectDB();
+// ---------------------- Start Server ----------------------
+const startServer = async () => {
+  try {
+    await connectDB();
 
-  // Forward the request to your existing Express app
-  app(req, res);
-}
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`🚀 Server running on ${PORT}`);
+    });
+  } catch (err) {
+    console.error("❌ Failed to start server:", err);
+  }
+};
+
+startServer();
