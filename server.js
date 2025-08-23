@@ -173,17 +173,11 @@ app.get("/stations", async (req, res) => {
 });
 
 
-// ---------------------- Start Server ----------------------
-const startServer = async () => {
-  try {
-    await connectDB();
+// ---------------------- Boot for Vercel Serverless ----------------------
+export default async function handler(req, res) {
+  // Ensure DB is connected for this invocation
+  await connectDB();
 
-    app.listen(PORT, "0.0.0.0", () => {
-      console.log(`🚀 Server running on ${PORT}`);
-    });
-  } catch (err) {
-    console.error("❌ Failed to start server:", err);
-  }
-};
-
-startServer();
+  // Forward the request to your existing Express app
+  app(req, res);
+}
