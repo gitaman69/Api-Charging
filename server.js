@@ -163,7 +163,7 @@ app.get("/stations", async (req, res) => {
     const normalized = normalizeStations(stations);
 
     // 🔹 Store in Redis cache (expire in 5 minutes)
-    await redisClient.setEx(cacheKey, 300, JSON.stringify(normalized));
+    await redisClient.set(cacheKey, JSON.stringify(normalized), "EX", 300);
 
     res.json(normalized);
   } catch (err) {
