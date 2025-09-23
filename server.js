@@ -2,6 +2,9 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import axios from "axios";
+import polyline from "@mapbox/polyline";
+import * as turf from "@turf/turf";
 import { connectDB, getCollection } from "./db.js";
 import redisClient from "./redisClient.js";
 
@@ -169,6 +172,75 @@ app.get("/stations", async (req, res) => {
   } catch (err) {
     console.error("❌ /stations error:", err);
     res.status(500).json({ error: "Failed to fetch stations" });
+  }
+});
+
+// ---------------------- Trip Planner ---------------------------
+app.post("/trip-planner", async (req, res) => {
+  try {
+    const { origin, destination, bufferKm = 2 } = req.body;
+    if (!origin || !destination) {
+      return res.status(400).json({ error: "origin and destination are required" });
+    }
+
+    // Cache key
+    const cacheKey = `trip:${origin}:${destination}:${bufferKm}`;
+    const cached = await redisClient.get(cacheKey);
+    if (cached) {
+      console.log("⚡ Serving trip from Redis cache");
+      return res.json(JSON.parse(cached));
+    }
+
+    // 1) Get route from Google Directions API
+    const directionsUrl = `https://maps.googleapis.com/maps/api/directions/json?origin=${encodeURIComponent(
+      origin
+    )}&destination=${encodeURIComponent(destination)}&key=${
+      process.env.GOOGLE
+    }&mode=driving`;
+
+    const dirResp = await axios.get(directionsUrl);
+    const route = dirResp.data.routes?.[0];
+    if (!route) return res.status(400).json({ error: "No route found" });
+
+    const encoded = route.overview_polyline.points;
+    const coords = polyline.decode(encoded); // [[lat, lng], ...]
+    const lineCoords = coords.map(([lat, lng]) => [lng, lat]); // GeoJSON order
+    const line = turf.lineString(lineCoords);
+
+    // 2) Buffer the route
+    const buffer = turf.buffer(line, bufferKm, { units: "kilometers" });
+
+    // Ensure 2dsphere index exists
+    await getCollection().createIndex({ location: "2dsphere" });
+
+    // 3) Query stations inside buffer polygon
+    const stations = await getCollection()
+      .find({
+        location: {
+          $geoWithin: { $geometry: buffer.geometry },
+        },
+      })
+      .limit(500) // safety cap
+      .toArray();
+
+    const normalizedStations = normalizeStations(stations);
+
+    const response = {
+      route: {
+        polyline: encoded,
+        distanceText: route.legs?.[0]?.distance?.text || null,
+        durationText: route.legs?.[0]?.duration?.text || null,
+      },
+      stations: normalizedStations,
+    };
+
+    // Cache for 10 minutes
+    await redisClient.set(cacheKey, JSON.stringify(response), "EX", 600);
+
+    res.json(response);
+  } catch (err) {
+    console.error("❌ /trip-planner error:", err.response?.data || err.message);
+    res.status(500).json({ error: "Trip planner failed" });
   }
 });
 
