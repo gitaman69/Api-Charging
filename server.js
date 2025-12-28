@@ -322,33 +322,33 @@ app.post("/trip-planner", async (req, res) => {
     res.status(500).json({ error: "Smart Trip Planner failed" });
   }
 });
-// // Smart Suggestion of Address (autocomplete)
-// app.get("/destination-suggestions", async (req, res) => {
-//   try {
-//     const { q } = req.query;
-//     if (!q || q.length < 2) return res.json([]);
+// Smart Suggestion of Address (autocomplete)
+app.get("/destination-suggestions", async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q || q.length < 2) return res.json([]);
 
-//     const cacheKey = `destSuggest:${q.toLowerCase()}`;
+    const cacheKey = `destSuggest:${q.toLowerCase()}`;
 
-//     const cached = await redisClient.get(cacheKey);
-//     if (cached) return res.json(JSON.parse(cached));
+    const cached = await redisClient.get(cacheKey);
+    if (cached) return res.json(JSON.parse(cached));
 
-//     const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(q)}&types=geocode&key=${process.env.GOOGLE}`;
-//     const { data } = await axios.get(url);
+    const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(q)}&types=geocode&key=${process.env.GOOGLE}`;
+    const { data } = await axios.get(url);
 
-//     if (!data.predictions) return res.json([]);
-//     // Return only the description (full address/landmark)
-//     const suggestions = data.predictions.map(p => p.description);
+    if (!data.predictions) return res.json([]);
+    // Return only the description (full address/landmark)
+    const suggestions = data.predictions.map(p => p.description);
 
-//     //cache for 10min
-//     await redisClient.set(cacheKey, JSON.stringify(suggestions), "EX", 600);
+    //cache for 10min
+    await redisClient.set(cacheKey, JSON.stringify(suggestions), "EX", 600);
 
-//     res.json(suggestions);
-//   } catch (err) {
-//     console.error("❌ /destination-suggestions error:", err.message);
-//     res.status(500).json({ error: "Failed to fetch destination suggestions" });
-//   }
-// });
+    res.json(suggestions);
+  } catch (err) {
+    console.error("❌ /destination-suggestions error:", err.message);
+    res.status(500).json({ error: "Failed to fetch destination suggestions" });
+  }
+});
 
 // // --------LOCAL SERVER BOOT (for development)--------
 // if (process.env.NODE_ENV !== "production") {
