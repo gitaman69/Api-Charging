@@ -6,8 +6,8 @@ dotenv.config();
 
 const MONGO_URI = process.env.MONGO_URI;
 const client = new MongoClient(MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
+  // useNewUrlParser: true,
+  // useUnifiedTopology: true,
   ssl: true,
   serverSelectionTimeoutMS: 30000
 });
