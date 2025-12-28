@@ -311,9 +311,31 @@ app.post("/trip-planner", async (req, res) => {
     });
 
     const response = {
-      bestRoute: results[0],
-      alternatives: results.slice(1, 3),
-    };
+  route: {
+    polyline: results[0].polyline,
+    distanceText: results[0].distance,
+    durationText: results[0].trafficTime
+      ? `${Math.round(results[0].trafficTime / 60)} mins`
+      : null,
+    baseDurationText: results[0].baseTime
+      ? `${Math.round(results[0].baseTime / 60)} mins`
+      : null,
+    congestionDelay: results[0].congestionDelay || 0,
+  },
+  stations: results[0].stations,
+  alternatives: results.slice(1, 3).map((alt) => ({
+    polyline: alt.polyline,
+    distanceText: alt.distance,
+    durationText: alt.trafficTime
+      ? `${Math.round(alt.trafficTime / 60)} mins`
+      : null,
+    baseDurationText: alt.baseTime
+      ? `${Math.round(alt.baseTime / 60)} mins`
+      : null,
+    congestionDelay: alt.congestionDelay || 0,
+    stations: alt.stations,
+  })),
+};
 
     await redisClient.set(cacheKey, JSON.stringify(response), "EX", 600);
     res.json(response);
