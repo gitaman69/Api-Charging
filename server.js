@@ -175,75 +175,189 @@ app.get("/stations", async (req, res) => {
   }
 });
 
-// ---------------------- Trip Planner ---------------------------
+// // ---------------------- Trip Planner ---------------------------
+// app.post("/trip-planner", async (req, res) => {
+//   try {
+//     const { origin, destination, bufferKm = 2 } = req.body;
+//     if (!origin || !destination) {
+//       return res.status(400).json({ error: "origin and destination are required" });
+//     }
+
+//     // Cache key
+//     const cacheKey = `trip:${origin}:${destination}:${bufferKm}`;
+//     const cached = await redisClient.get(cacheKey);
+//     if (cached) {
+//       console.log("⚡ Serving trip from Redis cache");
+//       return res.json(JSON.parse(cached));
+//     }
+
+//     // 1) Get route from Google Directions API
+//     const directionsUrl = `https://maps.googleapis.com/maps/api/directions/json?origin=${encodeURIComponent(
+//       origin
+//     )}&destination=${encodeURIComponent(destination)}&key=${
+//       process.env.GOOGLE
+//     }&mode=driving`;
+
+//     const dirResp = await axios.get(directionsUrl);
+//     const route = dirResp.data.routes?.[0];
+//     console.log(route);
+
+//     if (!route) return res.status(400).json({ error: "No route found" });
+
+//     const encoded = route.overview_polyline.points;
+//     const coords = polyline.decode(encoded); // [[lat, lng], ...]
+//     const lineCoords = coords.map(([lat, lng]) => [lng, lat]); // GeoJSON order
+//     const line = turf.lineString(lineCoords);
+
+//     // 2) Buffer the route
+//     const buffer = turf.buffer(line, bufferKm, { units: "kilometers" });
+
+//     // Ensure 2dsphere index exists
+//     await getCollection().createIndex({ location: "2dsphere" });
+
+//     // 3) Query stations inside buffer polygon
+//     const stations = await getCollection()
+//       .find({
+//         location: {
+//           $geoWithin: { $geometry: buffer.geometry },
+//         },
+//       })
+//       .limit(500) // safety cap
+//       .toArray();
+
+//     const normalizedStations = normalizeStations(stations);
+
+//     const response = {
+//       route: {
+//         polyline: encoded,
+//         distanceText: route.legs?.[0]?.distance?.text || null,
+//         durationText: route.legs?.[0]?.duration?.text || null,
+//       },
+//       stations: normalizedStations,
+//     };
+
+//     // Cache for 10 minutes
+//     await redisClient.set(cacheKey, JSON.stringify(response), "EX", 600);
+
+//     res.json(response);
+//   } catch (err) {
+//     console.error("❌ /trip-planner error:", err.response?.data || err.message);
+//     res.status(500).json({ error: "Trip planner failed" });
+//   }
+// });
+// ---------------------- Smart Traffic-Aware Trip Planner ----------------------
 app.post("/trip-planner", async (req, res) => {
   try {
     const { origin, destination, bufferKm = 2 } = req.body;
+
+    // Validate first
     if (!origin || !destination) {
-      return res.status(400).json({ error: "origin and destination are required" });
+      return res.status(400).json({ error: "origin and destination required" });
     }
 
-    // Cache key
-    const cacheKey = `trip:${origin}:${destination}:${bufferKm}`;
+    // cacheKey
+    const cacheKey = `smartTrip:${origin}:${destination}:${bufferKm}`;
+
     const cached = await redisClient.get(cacheKey);
-    if (cached) {
-      console.log("⚡ Serving trip from Redis cache");
-      return res.json(JSON.parse(cached));
+    if (cached) return res.json(JSON.parse(cached));
+
+    // Google Directions with traffic + alternatives
+    const directionsUrl =
+      `https://maps.googleapis.com/maps/api/directions/json` +
+      `?origin=${encodeURIComponent(origin)}` +
+      `&destination=${encodeURIComponent(destination)}` +
+      `&departure_time=now&traffic_model=best_guess&alternatives=true` +
+      `&key=${process.env.GOOGLE}`;
+
+    // console.log("Directions URL:", directionsUrl);
+
+    const { data } = await axios.get(directionsUrl);
+    if (!data.routes || !data.routes.length) {
+      return res.status(400).json({ error: "No route found" });
     }
 
-    // 1) Get route from Google Directions API
-    const directionsUrl = `https://maps.googleapis.com/maps/api/directions/json?origin=${encodeURIComponent(
-      origin
-    )}&destination=${encodeURIComponent(destination)}&key=${
-      process.env.GOOGLE
-    }&mode=driving`;
-
-    const dirResp = await axios.get(directionsUrl);
-    const route = dirResp.data.routes?.[0];
-    if (!route) return res.status(400).json({ error: "No route found" });
-
-    const encoded = route.overview_polyline.points;
-    const coords = polyline.decode(encoded); // [[lat, lng], ...]
-    const lineCoords = coords.map(([lat, lng]) => [lng, lat]); // GeoJSON order
-    const line = turf.lineString(lineCoords);
-
-    // 2) Buffer the route
-    const buffer = turf.buffer(line, bufferKm, { units: "kilometers" });
-
-    // Ensure 2dsphere index exists
     await getCollection().createIndex({ location: "2dsphere" });
 
-    // 3) Query stations inside buffer polygon
-    const stations = await getCollection()
-      .find({
-        location: {
-          $geoWithin: { $geometry: buffer.geometry },
-        },
-      })
-      .limit(500) // safety cap
-      .toArray();
+    const results = [];
 
-    const normalizedStations = normalizeStations(stations);
+    for (const route of data.routes) {
+      const poly = route.overview_polyline.points;
+      const leg = route.legs[0];
+
+      const coords = polyline.decode(poly).map(([lat, lng]) => [lng, lat]);
+      const line = turf.lineString(coords);
+      const buffer = turf.buffer(line, bufferKm, { units: "kilometers" });
+
+      const stations = await getCollection()
+        .find({ location: { $geoWithin: { $geometry: buffer.geometry } } })
+        .toArray();
+
+      results.push({
+        polyline: poly,
+        distance: leg.distance.text,
+        baseTime: leg.duration.value,
+        trafficTime: leg.duration_in_traffic.value,
+        congestionDelay: leg.duration_in_traffic.value - leg.duration.value,
+        stationCount: stations.length,
+        stations: normalizeStations(stations),
+      });
+    }
+
+    //  Rank best route (BASIC)
+    results.sort((a, b) => {
+      const scoreA = a.trafficTime - a.stationCount * 60;
+      const scoreB = b.trafficTime - b.stationCount * 60;
+      return scoreA - scoreB;
+    });
 
     const response = {
-      route: {
-        polyline: encoded,
-        distanceText: route.legs?.[0]?.distance?.text || null,
-        durationText: route.legs?.[0]?.duration?.text || null,
-      },
-      stations: normalizedStations,
+      bestRoute: results[0],
+      alternatives: results.slice(1, 3),
     };
 
-    // Cache for 10 minutes
     await redisClient.set(cacheKey, JSON.stringify(response), "EX", 600);
-
     res.json(response);
   } catch (err) {
-    console.error("❌ /trip-planner error:", err.response?.data || err.message);
-    res.status(500).json({ error: "Trip planner failed" });
+    console.error("❌ Trip planner error:", err.message);
+    res.status(500).json({ error: "Smart Trip Planner failed" });
+  }
+});
+// Smart Suggestion of Address (autocomplete)
+app.get("/destination-suggestions", async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q || q.length < 2) return res.json([]);
+
+    const cacheKey = `destSuggest:${q.toLowerCase()}`;
+
+    const cached = await redisClient.get(cacheKey);
+    if (cached) return res.json(JSON.parse(cached));
+
+    const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(q)}&types=geocode&key=${process.env.GOOGLE}`;
+    const { data } = await axios.get(url);
+
+    if (!data.predictions) return res.json([]);
+    // Return only the description (full address/landmark)
+    const suggestions = data.predictions.map(p => p.description);
+
+    //cache for 10min
+    await redisClient.set(cacheKey, JSON.stringify(suggestions), "EX", 600);
+
+    res.json(suggestions);
+  } catch (err) {
+    console.error("❌ /destination-suggestions error:", err.message);
+    res.status(500).json({ error: "Failed to fetch destination suggestions" });
   }
 });
 
+// // --------LOCAL SERVER BOOT (for development)--------
+// if (process.env.NODE_ENV !== "production") {
+//   connectDB().then(() => {
+//     app.listen(PORT, () => {
+//       console.log(`🚀 Server running on http://localhost:${PORT}`);
+//     });
+//   });
+// }
 
 // ---------------------- Boot for Vercel Serverless ----------------------
 export default async function handler(req, res) {
